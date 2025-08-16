@@ -9,9 +9,10 @@ import (
 )
 
 type Context struct {
-	Request *http.Request
+	Request  *http.Request
 	Response http.ResponseWriter
-	params map[string]string
+	params   map[string]string
+	store    map[string]interface{}
 }
 
 func (c *Context) Param(key string) string {
@@ -22,7 +23,7 @@ func (c *Context) Query(key string) string {
 	return c.Request.URL.Query().Get(key)
 }
 
-func (c *Context) QueryDefault (key, defaultValue string) string {
+func (c *Context) QueryDefault(key, defaultValue string) string {
 	value := c.Query(key)
 	if value == "" {
 		return defaultValue
@@ -119,4 +120,26 @@ func (c *Context) setParam(key, value string) {
 	}
 	decoded, _ := url.QueryUnescape(value)
 	c.params[key] = decoded
+}
+
+func (c *Context) Set(key string, value interface{}) {
+	if c.store == nil {
+		c.store = make(map[string]interface{})
+	}
+	c.store[key] = value
+}
+
+func (c *Context) Get(key string) (interface{}, bool) {
+	if c.store == nil {
+		return nil, false
+	}
+	value, exists := c.store[key]
+	return value, exists
+}
+
+func (c *Context) MustGet(key string) interface{} {
+	if value, exists := c.Get(key); exists {
+		return value
+	}
+	panic("Key \"" + key + "\" does not exist")
 }

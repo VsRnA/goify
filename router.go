@@ -7,22 +7,23 @@ import (
 )
 
 type Router struct {
-	routes map[string]map[string]HandlerFunc
-	server *http.Server
+	routes     map[string]map[string]HandlerFunc
+	middleware []MiddlewareFunc
+	server     *http.Server
 }
 
 type HandlerFunc func(*Context)
 
 func New() *Router {
 	return &Router{
-		routes: make(map[string]map[string]HandlerFunc),
+		routes:     make(map[string]map[string]HandlerFunc),
+		middleware: make([]MiddlewareFunc, 0),
 	}
 }
 
 func (rt *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	method := req.Method
 	path := req.URL.Path
-	
 	if len(path) > 1 && strings.HasSuffix(path, "/") {
 		path = strings.TrimSuffix(path, "/")
 	}
@@ -33,8 +34,10 @@ func (rt *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				Request:  req,
 				Response: w,
 				params:   make(map[string]string),
+				store:    make(map[string]interface{}),
 			}
-			handler(ctx)
+
+			rt.executeMiddleware(ctx, handler)
 			return
 		}
 	}

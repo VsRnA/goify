@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"time"
 
 	"github.com/VsRnA/goify"
 )
@@ -9,90 +10,88 @@ import (
 func main() {
 	app := goify.New()
 
+	app.Use(goify.Logger())
+	app.Use(goify.Recovery())
+	app.Use(goify.CORS())
+	app.Use(goify.RequestID())
+
+	rateLimiter := goify.NewRateLimiter(10, time.Minute)
+	app.Use(rateLimiter.Middleware())
+
+	app.Use(func(c *goify.Context, next func()) {
+		log.Println("Before request processing")
+		start := time.Now()
+
+		c.Set("start_time", start)
+		
+		next()
+		
+		duration := time.Since(start)
+		log.Printf("Request completed in %v", duration)
+	})
+
 	app.GET("/", func(c *goify.Context) {
-		c.JSON(200, goify.H{
-			"message": "Hello from Goify!",
-			"version": "0.1.0",
+		requestID, _ := c.Get("requestID")
+		
+		c.SendSuccess(goify.H{
+			"message":    "Hello from Goify with Middleware!",
+			"request_id": requestID,
 		})
 	})
 
-	app.GET("/hello", func(c *goify.Context) {
-		name := c.QueryDefault("name", "World")
+	app.GET("/panic", func(c *goify.Context) {
+		panic("This is a test panic!")
+	})
+
+	app.Use(goify.BasicAuth("admin", "secret"))
+	app.GET("/admin", func(c *goify.Context) {
 		c.SendSuccess(goify.H{
-			"greeting": "Hello, " + name + "!",
-		}, "Greeting sent successfully")
+			"message": "Welcome to admin panel!",
+		})
 	})
 
-	app.POST("/users", func(c *goify.Context) {
-		var user struct {
-			Name  string `json:"name"`
-			Email string `json:"email"`
-		}
+	app.Use(goify.Static("/static", "./static"))
 
-		if err := c.BindJSON(&user); err != nil {
-			c.SendBadRequest("Invalid JSON format", err.Error())
-			return
-		}
+	app.Use(goify.CORSWithConfig(goify.CORSConfig{
+		AllowOrigins: []string{"http://localhost:3000", "https://myapp.com"},
+		AllowMethods: []string{"GET", "POST"},
+		AllowHeaders: []string{"Content-Type", "Authorization", "X-Custom-Header"},
+	}))
 
-		if user.Name == "" || user.Email == "" {
-			c.SendBadRequest("Name and email are required")
-			return
-		}
-
-		response := goify.H{
-			"id":    123,
-			"name":  user.Name,
-			"email": user.Email,
-		}
-
-		c.SendCreated(response, "User created successfully")
-	})
-
-	app.GET("/users/profile", func(c *goify.Context) {
-		userID := c.Query("id")
-		if userID == "" {
-			c.SendBadRequest("User ID is required")
+	app.POST("/api/data", func(c *goify.Context) {
+		var data map[string]interface{}
+		if err := c.BindJSON(&data); err != nil {
+			c.SendBadRequest("Invalid JSON")
 			return
 		}
 
 		c.SendSuccess(goify.H{
-			"id":   userID,
-			"name": "John Doe",
-			"email": "john@example.com",
+			"received": data,
+			"message":  "Data processed successfully",
 		})
 	})
 
-	app.GET("/demo", func(c *goify.Context) {
-		responseType := c.QueryDefault("type", "json")
-
-		switch responseType {
-		case "text":
-			c.String(200, "Hello, this is plain text response!")
-		case "html":
-			c.HTML(200, "<h1>Hello HTML!</h1><p>This is an HTML response from Goify.</p>")
-		case "error":
-			c.SendNotFound("This is a demo 404 error")
-		case "redirect":
-			c.Redirect(302, "/")
-		default:
+	app.GET("/conditional", func(c *goify.Context) {
+		if userID, exists := c.Get("user_id"); exists {
 			c.SendSuccess(goify.H{
-				"message": "This is a JSON response",
-				"type":    "demo",
+				"message": "Authenticated user",
+				"user_id": userID,
+			})
+		} else {
+			c.SendSuccess(goify.H{
+				"message": "Anonymous user",
 			})
 		}
 	})
 
-	app.GET("/headers", func(c *goify.Context) {
-		userAgent := c.GetHeader("User-Agent")
-		c.SetHeader("X-Custom-Header", "Goify-Framework")
-		
-		c.SendSuccess(goify.H{
-			"your_user_agent": userAgent,
-			"custom_header_set": "X-Custom-Header",
-		})
-	})
-
-	log.Println("Starting Goify basic example...")
+	log.Println("Starting server with middleware examples...")
+	log.Println("Try these endpoints:")
+	log.Println("	 GET  / - Basic route with middleware")
+	log.Println("	 GET  /panic - Test recovery middleware")
+	log.Println("  GET  /admin - Protected with basic auth (admin:secret)")
+	log.Println("  POST /api/data - CORS enabled")
+	log.Println("  GET  /static/* - Static files")
+	
 	if err := app.Listen(":3000"); err != nil {
 		log.Fatal("Failed to start server:", err)
 	}
