@@ -11,6 +11,9 @@
 - 📝 **Богатый контекст**: Комплексная обработка запросов/ответов
 - 🔗 **Middleware**: Мощная система middleware с встроенными middleware
 - 🛡️ **Безопасный**: Встроенные CORS, recovery и authentication middleware
+- 🎯 **URL параметры**: Поддержка :param и *wildcard параметров
+- 📁 **Группы маршрутов**: Организация маршрутов с префиксами и групповыми middleware
+- ✅ **Валидация**: Мощная система валидации с struct tags и custom валидаторами
 
 ## Установка
 
@@ -54,6 +57,43 @@ app.POST("/users", createUserHandler)
 app.PUT("/users/:id", updateUserHandler)
 app.DELETE("/users/:id", deleteUserHandler)
 app.PATCH("/users/:id", patchUserHandler)
+
+// URL параметры
+app.GET("/users/:id", func(c *goify.Context) {
+    userID := c.Param("id") // Получить URL параметр
+    c.SendSuccess(goify.H{"user_id": userID})
+})
+
+// Множественные параметры
+app.GET("/users/:userId/posts/:postId", func(c *goify.Context) {
+    userID := c.Param("userId")
+    postID := c.Param("postId")
+    // Обработка обоих параметров
+})
+
+// Wildcard параметры (захват всего)
+app.GET("/files/*filepath", func(c *goify.Context) {
+    filepath := c.Param("filepath") // Получает всё после /files/
+})
+```
+
+### Группы маршрутов
+
+```go
+// Версионирование API
+v1 := app.Group("/api/v1")
+v1.GET("/users", handler)     // /api/v1/users
+v1.POST("/users", handler)    // /api/v1/users
+
+// Вложенные группы
+admin := v1.Group("/admin")
+admin.GET("/stats", handler)  // /api/v1/admin/stats
+
+// Групповые middleware
+api := app.Group("/api")
+api.Use(goify.Logger())
+api.Use(authMiddleware)
+api.GET("/protected", handler)
 ```
 
 ### Обработка запросов
@@ -76,6 +116,49 @@ app.GET("/users", func(c *goify.Context) {
     }
     
     c.SendSuccess(user)
+})
+```
+
+### Валидация запросов
+
+```go
+// Определение модели с валидационными тегами
+type User struct {
+    Name  string `json:"name" validate:"required,min=2,max=50"`
+    Email string `json:"email" validate:"required,email"`
+    Age   int    `json:"age" validate:"required,min=18,max=120"`
+}
+
+// Автоматическая валидация
+app.POST("/users", func(c *goify.Context) {
+    var user User
+    
+    // Привязка и валидация одной командой
+    if err := c.BindAndValidate(&user); err != nil {
+        c.SendValidationError(err)
+        return
+    }
+    
+    c.SendCreated(user, "Пользователь создан")
+})
+
+// Валидация query параметров
+type QueryParams struct {
+    Page  int    `query:"page" validate:"min=1,max=1000"`
+    Limit int    `query:"limit" validate:"min=1,max=100"`
+    Sort  string `query:"sort" validate:"oneof=name email age"`
+}
+
+app.GET("/users", func(c *goify.Context) {
+    var params QueryParams
+    params.Page = 1 // значения по умолчанию
+    
+    if err := c.ValidateQuery(&params); err != nil {
+        c.SendValidationError(err)
+        return
+    }
+    
+    // params теперь содержит валидные данные
 })
 ```
 
@@ -138,6 +221,9 @@ app.Use(func(c *goify.Context, next func()) {
 Посмотрите папку [examples](./examples/) для более подробных примеров использования:
 
 - [Базовый пример](./examples/basic/main.go) - Простые CRUD операции
+- [Пример Middleware](./examples/middleware/main.go) - Комплексное использование middleware
+- [Группы и параметры](./examples/groups-params/main.go) - URL параметры и группы маршрутов
+- [Валидация](./examples/validation/main.go) - Валидация запросов с struct tags
 
 ## Справочник API
 
@@ -145,6 +231,7 @@ app.Use(func(c *goify.Context, next func()) {
 
 - `New()` - Создать новый экземпляр роутера
 - `Use(middleware...)` - Добавить middleware к роутеру
+- `Group(prefix)` - Создать группу маршрутов с префиксом
 - `GET(path, handler)` - Зарегистрировать GET маршрут
 - `POST(path, handler)` - Зарегистрировать POST маршрут
 - `PUT(path, handler)` - Зарегистрировать PUT маршрут
@@ -161,6 +248,9 @@ app.Use(func(c *goify.Context, next func()) {
 - `Param(key)` - Получить URL параметр
 - `GetHeader(key)` - Получить заголовок запроса
 - `BindJSON(obj)` - Привязать JSON к структуре
+- `BindAndValidate(obj)` - Привязать JSON и валидировать
+- `ValidateStruct(obj)` - Валидировать структуру
+- `ValidateQuery(obj)` - Валидировать query параметры
 - `Body()` - Получить сырое тело запроса
 - `Set(key, value)` - Сохранить значение в контексте
 - `Get(key)` - Получить значение из контекста
@@ -173,6 +263,8 @@ app.Use(func(c *goify.Context, next func()) {
 - `SendError(code, message, details?)` - Отправить ответ с ошибкой
 - `SendCreated(data, message?)` - Отправить ответ 201
 - `SendBadRequest(message, details?)` - Отправить ответ 400
+- `SendValidationError(errors)` - Отправить ответ 422 с ошибками валидации
+- `SendFieldError(field, message)` - Отправить ошибку для конкретного поля
 - `SendNotFound(message?)` - Отправить ответ 404
 - `SetHeader(key, value)` - Установить заголовок ответа
 - `Redirect(code, location)` - Отправить редирект
@@ -244,7 +336,7 @@ package main
 import (
     "log"
     "time"
-    "github.com/yourusername/goify"
+    "github.com/VsRnA/goify"
 )
 
 func main() {
@@ -273,17 +365,12 @@ func main() {
 
     app.POST("/users", func(c *goify.Context) {
         var user struct {
-            Name  string `json:"name"`
-            Email string `json:"email"`
+            Name  string `json:"name" validate:"required,min=2,max=50"`
+            Email string `json:"email" validate:"required,email"`
         }
 
-        if err := c.BindJSON(&user); err != nil {
-            c.SendBadRequest("Некорректный JSON")
-            return
-        }
-
-        if user.Name == "" || user.Email == "" {
-            c.SendBadRequest("Имя и email обязательны")
+        if err := c.BindAndValidate(&user); err != nil {
+            c.SendValidationError(err)
             return
         }
 
@@ -308,6 +395,174 @@ func main() {
 }
 ```
 
+## URL Параметры
+
+Goify поддерживает несколько типов URL параметров:
+
+### Одиночные параметры
+```go
+app.GET("/users/:id", func(c *goify.Context) {
+    userID := c.Param("id") // Получить значение параметра
+})
+// Соответствует: /users/123, /users/abc
+```
+
+### Множественные параметры
+```go
+app.GET("/users/:userId/posts/:postId", func(c *goify.Context) {
+    userID := c.Param("userId")
+    postID := c.Param("postId")
+})
+// Соответствует: /users/123/posts/456
+```
+
+### Wildcard параметры
+```go
+app.GET("/files/*filepath", func(c *goify.Context) {
+    filepath := c.Param("filepath") // Получает весь остальной путь
+})
+```
+
+## Группы маршрутов
+
+Группы позволяют организовать маршруты с общими префиксами и middleware:
+
+### Базовые группы
+```go
+api := app.Group("/api")
+api.GET("/users", handler)    // /api/users
+api.POST("/users", handler)   // /api/users
+```
+
+### Вложенные группы
+```go
+v1 := app.Group("/api/v1")
+admin := v1.Group("/admin")
+admin.GET("/stats", handler)  // /api/v1/admin/stats
+```
+
+### Групповые middleware
+```go
+api := app.Group("/api")
+api.Use(authMiddleware)       // Применяется ко всем маршрутам группы
+api.Use(loggingMiddleware)
+
+api.GET("/protected", handler) // Требует аутентификации
+```
+
+### Комбинирование с параметрами
+```go
+users := app.Group("/users")
+users.GET("/:id", getUserHandler)           // /users/123
+users.GET("/:id/posts", getUserPostsHandler) // /users/123/posts
+users.POST("/:id/posts", createPostHandler)  // /users/123/posts
+```
+
+## Валидация запросов
+
+Goify предоставляет мощную систему валидации с поддержкой struct tags:
+
+### Встроенные валидаторы
+
+#### Обязательные поля
+```go
+type User struct {
+    Name string `json:"name" validate:"required"`
+}
+```
+
+#### Длина и размер
+```go
+type User struct {
+    Name     string `json:"name" validate:"min=2,max=50"`
+    Age      int    `json:"age" validate:"min=18,max=120"`
+    Tags     []string `json:"tags" validate:"max=5"`
+}
+```
+
+#### Форматы
+```go
+type User struct {
+    Email   string `json:"email" validate:"email"`
+    Website string `json:"website" validate:"url"`
+    Phone   string `json:"phone" validate:"numeric"`
+}
+```
+
+#### Ограничения
+```go
+type User struct {
+    Role     string `json:"role" validate:"oneof=admin user moderator"`
+    Username string `json:"username" validate:"alphanum"`
+    Name     string `json:"name" validate:"alpha"`
+}
+```
+
+### Пользовательские валидаторы
+
+```go
+// Регистрация пользовательского валидатора
+goify.RegisterValidator("strong_password", func(value interface{}, param string) error {
+    password := value.(string)
+    if len(password) < 8 {
+        return fmt.Errorf("пароль должен содержать минимум 8 символов")
+    }
+    // дополнительные проверки...
+    return nil
+})
+
+// Использование
+type User struct {
+    Password string `json:"password" validate:"required,strong_password"`
+}
+```
+
+### Валидация вложенных структур
+
+```go
+type Address struct {
+    Street  string `json:"street" validate:"required,min=5"`
+    City    string `json:"city" validate:"required"`
+    Country string `json:"country" validate:"required,min=2"`
+}
+
+type User struct {
+    Name    string  `json:"name" validate:"required"`
+    Address Address `json:"address" validate:"required"`
+}
+```
+
+### Обработка ошибок валидации
+
+```go
+app.POST("/users", func(c *goify.Context) {
+    var user User
+    
+    if err := c.BindAndValidate(&user); err != nil {
+        // Автоматически отправляет структурированные ошибки
+        c.SendValidationError(err)
+        return
+    }
+    
+    // Данные валидны
+    c.SendCreated(user)
+})
+```
+
+### Полный список валидаторов
+
+| Валидатор | Описание | Пример |
+|-----------|----------|---------|
+| `required` | Обязательное поле | `validate:"required"` |
+| `min=N` | Минимальная длина/значение | `validate:"min=2"` |
+| `max=N` | Максимальная длина/значение | `validate:"max=50"` |
+| `email` | Email формат | `validate:"email"` |
+| `url` | URL формат | `validate:"url"` |
+| `alpha` | Только буквы | `validate:"alpha"` |
+| `alphanum` | Буквы и цифры | `validate:"alphanum"` |
+| `numeric` | Только цифры | `validate:"numeric"` |
+| `oneof=a b c` | Одно из значений | `validate:"oneof=admin user"` |
+
 
 ## Производительность
 
@@ -317,4 +572,3 @@ Goify построен на стандартной библиотеке Go и с
 - Минимальные аллокации памяти
 - Эффективная обработка middleware
 - Быстрая маршрутизация
-

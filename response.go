@@ -78,6 +78,44 @@ func (c *Context) SendBadRequest(message string, details ...interface{}) error {
 	return c.SendError(http.StatusBadRequest, message, details...)
 }
 
+func (c *Context) SendValidationError(validationErrors interface{}) error {
+	var message string
+	var details interface{}
+	
+	switch ve := validationErrors.(type) {
+	case ValidationErrors:
+		message = "Validation failed"
+		details = ve
+	case error:
+		message = ve.Error()
+		if validationErrs, ok := validationErrors.(ValidationErrors); ok {
+			details = validationErrs
+		}
+	default:
+		message = "Validation failed"
+		details = validationErrors
+	}
+	
+	errorResp := ErrorResponse{
+		Error:   "Validation Error",
+		Message: message,
+		Code:    422,
+		Details: details,
+	}
+	
+	return c.JSON(422, errorResp)
+}
+
+func (c *Context) SendFieldError(field, message string) error {
+	validationError := ValidationErrors{
+		{
+			Field:   field,
+			Message: message,
+		},
+	}
+	return c.SendValidationError(validationError)
+}
+
 func (c *Context) SendUnauthorized(message ...string) error {
 	msg := "Unauthorized access"
 	if len(message) > 0 {
