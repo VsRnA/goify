@@ -243,7 +243,7 @@ func main() {
 		})
 	})
 
-	log.Println("🚀 Server started with Groups and Parameters support!")
+	log.Println("Server started with Groups and Parameters support!")
 	log.Println("")
 	log.Println("Available endpoints:")
 	log.Println("  GET  / - Welcome message")

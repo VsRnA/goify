@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strconv"
+	"strings"
 )
 
 type Context struct {
@@ -49,6 +51,100 @@ func (c *Context) Body() ([]byte, error) {
 func (c *Context) BindJSON(obj interface{}) error {
 	decoder := json.NewDecoder(c.Request.Body)
 	return decoder.Decode(obj)
+}
+
+func (c *Context) BindAndValidate(obj interface{}) error {
+	if err := c.BindJSON(obj); err != nil {
+		return err
+	}
+	
+	if validationErrors := Validate(obj); len(validationErrors) > 0 {
+		return validationErrors
+	}
+	
+	return nil
+}
+
+func (c *Context) ValidateStruct(obj interface{}) ValidationErrors {
+	return Validate(obj)
+}
+
+func (c *Context) ValidateQuery(obj interface{}) error {
+
+	rv := reflect.ValueOf(obj)
+	if rv.Kind() != reflect.Ptr || rv.Elem().Kind() != reflect.Struct {
+		return fmt.Errorf("obj must be a pointer to struct")
+	}
+	
+	rv = rv.Elem()
+	rt := rv.Type()
+	
+	for i := 0; i < rv.NumField(); i++ {
+		field := rv.Field(i)
+		fieldType := rt.Field(i)
+		
+		if !field.CanSet() {
+			continue
+		}
+
+		paramName := fieldType.Name
+		if tag := fieldType.Tag.Get("query"); tag != "" {
+			paramName = tag
+		} else if tag := fieldType.Tag.Get("json"); tag != "" {
+			if tagName := strings.Split(tag, ",")[0]; tagName != "" && tagName != "-" {
+				paramName = tagName
+			}
+		}
+		
+		queryValue := c.Query(paramName)
+		if queryValue == "" {
+			continue
+		}
+
+		if err := setFieldValue(field, queryValue); err != nil {
+			return fmt.Errorf("invalid value for field %s: %v", fieldType.Name, err)
+		}
+	}
+
+	if validationErrors := Validate(obj); len(validationErrors) > 0 {
+		return validationErrors
+	}
+	
+	return nil
+}
+
+func setFieldValue(field reflect.Value, value string) error {
+	switch field.Kind() {
+	case reflect.String:
+		field.SetString(value)
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		intVal, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return err
+		}
+		field.SetInt(intVal)
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		uintVal, err := strconv.ParseUint(value, 10, 64)
+		if err != nil {
+			return err
+		}
+		field.SetUint(uintVal)
+	case reflect.Float32, reflect.Float64:
+		floatVal, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return err
+		}
+		field.SetFloat(floatVal)
+	case reflect.Bool:
+		boolVal, err := strconv.ParseBool(value)
+		if err != nil {
+			return err
+		}
+		field.SetBool(boolVal)
+	default:
+		return fmt.Errorf("unsupported field type: %v", field.Kind())
+	}
+	return nil
 }
 
 func (c *Context) GetHeader(key string) string {
