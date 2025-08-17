@@ -11,6 +11,8 @@
 - 📝 **Богатый контекст**: Комплексная обработка запросов/ответов
 - 🔗 **Middleware**: Мощная система middleware с встроенными middleware
 - 🛡️ **Безопасный**: Встроенные CORS, recovery и authentication middleware
+- 🎯 **URL параметры**: Поддержка :param и *wildcard параметров
+- 📁 **Группы маршрутов**: Организация маршрутов с префиксами и групповыми middleware
 
 ## Установка
 
@@ -54,6 +56,43 @@ app.POST("/users", createUserHandler)
 app.PUT("/users/:id", updateUserHandler)
 app.DELETE("/users/:id", deleteUserHandler)
 app.PATCH("/users/:id", patchUserHandler)
+
+// URL параметры
+app.GET("/users/:id", func(c *goify.Context) {
+    userID := c.Param("id") // Получить URL параметр
+    c.SendSuccess(goify.H{"user_id": userID})
+})
+
+// Множественные параметры
+app.GET("/users/:userId/posts/:postId", func(c *goify.Context) {
+    userID := c.Param("userId")
+    postID := c.Param("postId")
+    // Обработка обоих параметров
+})
+
+// Wildcard параметры (захват всего)
+app.GET("/files/*filepath", func(c *goify.Context) {
+    filepath := c.Param("filepath") // Получает всё после /files/
+})
+```
+
+### Группы маршрутов
+
+```go
+// Версионирование API
+v1 := app.Group("/api/v1")
+v1.GET("/users", handler)     // /api/v1/users
+v1.POST("/users", handler)    // /api/v1/users
+
+// Вложенные группы
+admin := v1.Group("/admin")
+admin.GET("/stats", handler)  // /api/v1/admin/stats
+
+// Групповые middleware
+api := app.Group("/api")
+api.Use(goify.Logger())
+api.Use(authMiddleware)
+api.GET("/protected", handler)
 ```
 
 ### Обработка запросов
@@ -138,6 +177,8 @@ app.Use(func(c *goify.Context, next func()) {
 Посмотрите папку [examples](./examples/) для более подробных примеров использования:
 
 - [Базовый пример](./examples/basic/main.go) - Простые CRUD операции
+- [Пример Middleware](./examples/middleware/main.go) - Комплексное использование middleware
+- [Группы и параметры](./examples/groups-params/main.go) - URL параметры и группы маршрутов
 
 ## Справочник API
 
@@ -145,6 +186,7 @@ app.Use(func(c *goify.Context, next func()) {
 
 - `New()` - Создать новый экземпляр роутера
 - `Use(middleware...)` - Добавить middleware к роутеру
+- `Group(prefix)` - Создать группу маршрутов с префиксом
 - `GET(path, handler)` - Зарегистрировать GET маршрут
 - `POST(path, handler)` - Зарегистрировать POST маршрут
 - `PUT(path, handler)` - Зарегистрировать PUT маршрут
@@ -244,7 +286,7 @@ package main
 import (
     "log"
     "time"
-    "github.com/yourusername/goify"
+    "github.com/VsRnA/goify"
 )
 
 func main() {
@@ -308,6 +350,69 @@ func main() {
 }
 ```
 
+## URL Параметры
+
+Goify поддерживает несколько типов URL параметров:
+
+### Одиночные параметры
+```go
+app.GET("/users/:id", func(c *goify.Context) {
+    userID := c.Param("id") // Получить значение параметра
+})
+// Соответствует: /users/123, /users/abc
+```
+
+### Множественные параметры
+```go
+app.GET("/users/:userId/posts/:postId", func(c *goify.Context) {
+    userID := c.Param("userId")
+    postID := c.Param("postId")
+})
+// Соответствует: /users/123/posts/456
+```
+
+### Wildcard параметры
+```go
+app.GET("/files/*filepath", func(c *goify.Context) {
+    filepath := c.Param("filepath") // Получает весь остальной путь
+})
+```
+
+## Группы маршрутов
+
+Группы позволяют организовать маршруты с общими префиксами и middleware:
+
+### Базовые группы
+```go
+api := app.Group("/api")
+api.GET("/users", handler)    // /api/users
+api.POST("/users", handler)   // /api/users
+```
+
+### Вложенные группы
+```go
+v1 := app.Group("/api/v1")
+admin := v1.Group("/admin")
+admin.GET("/stats", handler)  // /api/v1/admin/stats
+```
+
+### Групповые middleware
+```go
+api := app.Group("/api")
+api.Use(authMiddleware)       // Применяется ко всем маршрутам группы
+api.Use(loggingMiddleware)
+
+api.GET("/protected", handler) // Требует аутентификации
+```
+
+### Комбинирование с параметрами
+```go
+users := app.Group("/users")
+users.GET("/:id", getUserHandler)           // /users/123
+users.GET("/:id/posts", getUserPostsHandler) // /users/123/posts
+users.POST("/:id/posts", createPostHandler)  // /users/123/posts
+```
+
 
 ## Производительность
 
@@ -317,4 +422,3 @@ Goify построен на стандартной библиотеке Go и с
 - Минимальные аллокации памяти
 - Эффективная обработка middleware
 - Быстрая маршрутизация
-

@@ -8,6 +8,7 @@ import (
 
 type Router struct {
 	routes     map[string]map[string]HandlerFunc
+	tree       *RouteNode             
 	middleware []MiddlewareFunc
 	server     *http.Server
 }
@@ -17,15 +18,26 @@ type HandlerFunc func(*Context)
 func New() *Router {
 	return &Router{
 		routes:     make(map[string]map[string]HandlerFunc),
+		tree:       NewRouteNode(),
 		middleware: make([]MiddlewareFunc, 0),
 	}
 }
 
 func (rt *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	method := req.Method
-	path := req.URL.Path
-	if len(path) > 1 && strings.HasSuffix(path, "/") {
-		path = strings.TrimSuffix(path, "/")
+	path := cleanPath(req.URL.Path)
+
+	handler, params := rt.tree.findRoute(path, method)
+	if handler != nil {
+		ctx := &Context{
+			Request:  req,
+			Response: w,
+			params:   params,
+			store:    make(map[string]interface{}),
+		}
+
+		rt.executeMiddleware(ctx, handler)
+		return
 	}
 
 	if methodRoutes, exists := rt.routes[method]; exists {
@@ -46,14 +58,16 @@ func (rt *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 func (rt *Router) addRoute(method, path string, handler HandlerFunc) {
-	if len(path) > 1 && strings.HasSuffix(path, "/") {
-		path = strings.TrimSuffix(path, "/")
+	path = cleanPath(path)
+
+	if strings.Contains(path, ":") || strings.Contains(path, "*") {
+		rt.tree.addRoute(path, method, handler)
+	} else {
+		if rt.routes[method] == nil {
+			rt.routes[method] = make(map[string]HandlerFunc)
+		}
+		rt.routes[method][path] = handler
 	}
-	
-	if rt.routes[method] == nil {
-		rt.routes[method] = make(map[string]HandlerFunc)
-	}
-	rt.routes[method][path] = handler
 }
 
 func (rt *Router) GET(path string, handler HandlerFunc) {
