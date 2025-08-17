@@ -14,6 +14,7 @@
 - 🎯 **URL параметры**: Поддержка :param и *wildcard параметров
 - 📁 **Группы маршрутов**: Организация маршрутов с префиксами и групповыми middleware
 - ✅ **Валидация**: Мощная система валидации с struct tags и custom валидаторами
+- 📤 **Загрузка файлов**: Поддержка multipart form с валидацией файлов
 
 ## Установка
 
@@ -74,6 +75,81 @@ app.GET("/users/:userId/posts/:postId", func(c *goify.Context) {
 // Wildcard параметры (захват всего)
 app.GET("/files/*filepath", func(c *goify.Context) {
     filepath := c.Param("filepath") // Получает всё после /files/
+})
+```
+
+### Загрузка файлов
+
+```go
+// Одиночная загрузка файла с валидацией
+app.POST("/upload", func(c *goify.Context) {
+    file, err := c.FormFile("avatar")
+    if err != nil {
+        c.SendBadRequest("Файл обязателен")
+        return
+    }
+    
+    // Валидация файла
+    validation := goify.FileValidation{
+        MaxSize:      5 * 1024 * 1024, // 5MB
+        AllowedTypes: []string{"image/jpeg", "image/png"},
+        AllowedExts:  []string{".jpg", ".jpeg", ".png"},
+        Required:     true,
+    }
+    
+    if err := c.ValidateFile(file, validation); err != nil {
+        c.SendFileUploadError(err)
+        return
+    }
+    
+    // Сохранение файла
+    savedPath, err := c.SaveUploadedFile(file, "./uploads/")
+    if err != nil {
+        c.SendInternalError("Ошибка сохранения файла")
+        return
+    }
+    
+    c.SendCreated(goify.H{
+        "filename":   file.Filename,
+        "path":       savedPath,
+        "size":       goify.FormatFileSize(file.Size),
+        "url":        "/uploads/" + filepath.Base(savedPath),
+    })
+})
+
+// Загрузка нескольких файлов
+app.POST("/upload/multiple", func(c *goify.Context) {
+    files, err := c.FormFiles("files")
+    if err != nil {
+        c.SendBadRequest("Файлы обязательны")
+        return
+    }
+    
+    // Валидация всех файлов
+    validation := goify.FileValidation{MaxSize: 10 * 1024 * 1024}
+    if errors := c.ValidateFiles(files, validation); len(errors) > 0 {
+        c.SendFileUploadError(errors)
+        return
+    }
+    
+    // Обработка файлов...
+})
+
+// Multipart форма с файлами и данными
+type UploadRequest struct {
+    Title string            `form:"title" validate:"required"`
+    File  *goify.FileHeader `form:"file"`
+}
+
+app.POST("/upload/form", func(c *goify.Context) {
+    var req UploadRequest
+    
+    if err := c.BindMultipart(&req); err != nil {
+        c.SendBadRequest("Некорректные данные формы")
+        return
+    }
+    
+    // Валидация и обработка...
 })
 ```
 
@@ -224,6 +300,7 @@ app.Use(func(c *goify.Context, next func()) {
 - [Пример Middleware](./examples/middleware/main.go) - Комплексное использование middleware
 - [Группы и параметры](./examples/groups-params/main.go) - URL параметры и группы маршрутов
 - [Валидация](./examples/validation/main.go) - Валидация запросов с struct tags
+- [Загрузка файлов](./examples/upload/main.go) - Загрузка файлов с валидацией
 
 ## Справочник API
 
@@ -251,6 +328,13 @@ app.Use(func(c *goify.Context, next func()) {
 - `BindAndValidate(obj)` - Привязать JSON и валидировать
 - `ValidateStruct(obj)` - Валидировать структуру
 - `ValidateQuery(obj)` - Валидировать query параметры
+- `FormFile(key)` - Получить загруженный файл
+- `FormFiles(key)` - Получить множественные файлы
+- `BindMultipart(obj)` - Привязать multipart форму к структуре
+- `ValidateFile(file, validation)` - Валидировать загруженный файл
+- `ValidateFiles(files, validation)` - Валидировать множественные файлы
+- `SaveUploadedFile(file, dir)` - Сохранить загруженный файл
+- `GetUploadedFileInfo(key)` - Получить информацию о файле
 - `Body()` - Получить сырое тело запроса
 - `Set(key, value)` - Сохранить значение в контексте
 - `Get(key)` - Получить значение из контекста
@@ -264,6 +348,7 @@ app.Use(func(c *goify.Context, next func()) {
 - `SendCreated(data, message?)` - Отправить ответ 201
 - `SendBadRequest(message, details?)` - Отправить ответ 400
 - `SendValidationError(errors)` - Отправить ответ 422 с ошибками валидации
+- `SendFileUploadError(errors)` - Отправить ошибку загрузки файла
 - `SendFieldError(field, message)` - Отправить ошибку для конкретного поля
 - `SendNotFound(message?)` - Отправить ответ 404
 - `SetHeader(key, value)` - Установить заголовок ответа
@@ -563,6 +648,184 @@ app.POST("/users", func(c *goify.Context) {
 | `numeric` | Только цифры | `validate:"numeric"` |
 | `oneof=a b c` | Одно из значений | `validate:"oneof=admin user"` |
 
+## Загрузка файлов
+
+Goify поддерживает загрузку файлов через multipart forms с мощной системой валидации:
+
+### Основные возможности
+
+#### Одиночная загрузка файла
+```go
+app.POST("/upload", func(c *goify.Context) {
+    file, err := c.FormFile("file")
+    if err != nil {
+        c.SendBadRequest("Файл обязателен")
+        return
+    }
+    
+    // Сохранение с автоматическим именем
+    savedPath, err := c.SaveUploadedFile(file, "./uploads/")
+    if err != nil {
+        c.SendInternalError("Ошибка сохранения")
+        return
+    }
+    
+    c.SendCreated(goify.H{"path": savedPath})
+})
+```
+
+#### Множественная загрузка
+```go
+app.POST("/upload/multiple", func(c *goify.Context) {
+    files, err := c.FormFiles("files")
+    if err != nil {
+        c.SendBadRequest("Файлы обязательны")
+        return
+    }
+    
+    var savedFiles []string
+    for _, file := range files {
+        path, _ := c.SaveUploadedFile(file, "./uploads/")
+        savedFiles = append(savedFiles, path)
+    }
+    
+    c.SendCreated(goify.H{"files": savedFiles})
+})
+```
+
+### Валидация файлов
+
+#### Базовая валидация
+```go
+validation := goify.FileValidation{
+    MaxSize:      5 * 1024 * 1024, // 5MB
+    MinSize:      1024,             // 1KB
+    AllowedTypes: []string{"image/jpeg", "image/png"},
+    AllowedExts:  []string{".jpg", ".jpeg", ".png"},
+    Required:     true,
+}
+
+if err := c.ValidateFile(file, validation); err != nil {
+    c.SendFileUploadError(err)
+    return
+}
+```
+
+#### Валидация по категориям
+```go
+func getValidationForCategory(category string) goify.FileValidation {
+    switch category {
+    case "image":
+        return goify.FileValidation{
+            MaxSize:      5 * 1024 * 1024,
+            AllowedTypes: []string{"image/jpeg", "image/png", "image/gif"},
+            AllowedExts:  []string{".jpg", ".jpeg", ".png", ".gif"},
+        }
+    case "document":
+        return goify.FileValidation{
+            MaxSize:      10 * 1024 * 1024,
+            AllowedTypes: []string{"application/pdf", "text/plain"},
+            AllowedExts:  []string{".pdf", ".txt", ".doc", ".docx"},
+        }
+    case "video":
+        return goify.FileValidation{
+            MaxSize:      50 * 1024 * 1024,
+            AllowedTypes: []string{"video/mp4", "video/avi"},
+            AllowedExts:  []string{".mp4", ".avi", ".mov"},
+        }
+    }
+    return goify.FileValidation{}
+}
+```
+
+### Multipart формы с данными
+
+```go
+type FileUploadRequest struct {
+    Title       string            `form:"title" validate:"required"`
+    Description string            `form:"description" validate:"max=500"`
+    Category    string            `form:"category" validate:"oneof=image document video"`
+    File        *goify.FileHeader `form:"file"`
+    IsPublic    bool              `form:"is_public"`
+}
+
+app.POST("/upload/form", func(c *goify.Context) {
+    var req FileUploadRequest
+    
+    // Привязка формы (включая файлы)
+    if err := c.BindMultipart(&req); err != nil {
+        c.SendBadRequest("Некорректные данные формы")
+        return
+    }
+    
+    // Валидация данных формы
+    if validationErrors := c.ValidateStruct(&req); len(validationErrors) > 0 {
+        c.SendValidationError(validationErrors)
+        return
+    }
+    
+    // Валидация файла
+    validation := getValidationForCategory(req.Category)
+    if err := c.ValidateFile(req.File, validation); err != nil {
+        c.SendFileUploadError(err)
+        return
+    }
+    
+    // Сохранение и обработка...
+})
+```
+
+### Утилиты для работы с файлами
+
+```go
+// Получение информации о файле
+fileInfo, err := c.GetUploadedFileInfo("file")
+// Возвращает: filename, size, size_human, content_type, is_image
+
+// Проверка существования файла
+exists := goify.FileExists("./uploads/file.jpg")
+
+// Получение размера файла
+size, err := goify.GetFileSize("./uploads/file.jpg")
+
+// Форматирование размера
+humanSize := goify.FormatFileSize(1024576) // "1.0 MB"
+
+// Определение MIME типа
+mimeType := goify.GetMimeType("image.jpg") // "image/jpeg"
+
+// Проверка типа изображения
+isImage := goify.IsImageFile("image/jpeg") // true
+
+// Удаление файла
+err := goify.DeleteFile("./uploads/file.jpg")
+```
+
+### Обработка ошибок загрузки
+
+```go
+// Специфичные ошибки загрузки файлов
+c.SendFileUploadError(err)           // Общая ошибка загрузки
+c.SendFileTooBigError(maxSize)       // Файл слишком большой
+
+// Пример обработки разных типов ошибок
+if err := c.ValidateFile(file, validation); err != nil {
+    if uploadErr, ok := err.(goify.FileUploadError); ok {
+        switch uploadErr.Code {
+        case "max_size":
+            c.SendFileTooBigError(validation.MaxSize)
+        case "invalid_type":
+            c.SendFileUploadError(goify.FileUploadError{
+                Message: "Недопустимый тип файла",
+                Code:    "invalid_type",
+            })
+        default:
+            c.SendFileUploadError(err)
+        }
+    }
+    return
+}
+```
 
 ## Производительность
 
