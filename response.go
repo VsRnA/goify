@@ -116,6 +116,41 @@ func (c *Context) SendFieldError(field, message string) error {
 	return c.SendValidationError(validationError)
 }
 
+func (c *Context) SendFileUploadError(uploadErrors interface{}) error {
+	var message string
+	var details interface{}
+	
+	switch ue := uploadErrors.(type) {
+	case FileUploadErrors:
+		message = "File upload failed"
+		details = ue
+	case FileUploadError:
+		message = ue.Message
+		details = []FileUploadError{ue}
+	case error:
+		message = ue.Error()
+	default:
+		message = "File upload failed"
+		details = uploadErrors
+	}
+	
+	errorResp := ErrorResponse{
+		Error:   "File Upload Error",
+		Message: message,
+		Code:    422,
+		Details: details,
+	}
+	
+	return c.JSON(422, errorResp)
+}
+
+func (c *Context) SendFileTooBigError(maxSize int64) error {
+	return c.SendFileUploadError(FileUploadError{
+		Message: fmt.Sprintf("File size exceeds maximum allowed size of %s", FormatFileSize(maxSize)),
+		Code:    "file_too_big",
+	})
+}
+
 func (c *Context) SendUnauthorized(message ...string) error {
 	msg := "Unauthorized access"
 	if len(message) > 0 {

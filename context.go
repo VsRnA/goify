@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -70,7 +71,6 @@ func (c *Context) ValidateStruct(obj interface{}) ValidationErrors {
 }
 
 func (c *Context) ValidateQuery(obj interface{}) error {
-
 	rv := reflect.ValueOf(obj)
 	if rv.Kind() != reflect.Ptr || rv.Elem().Kind() != reflect.Struct {
 		return fmt.Errorf("obj must be a pointer to struct")
@@ -201,13 +201,150 @@ func (c *Context) Form(key string) string {
 	return c.Request.FormValue(key)
 }
 
-func (c *Context) FormFile(key string) (*http.Request, error) {
-	file, _, err := c.Request.FormFile(key)
+func (c *Context) FormFile(key string) (*FileHeader, error) {
+	file, header, err := c.Request.FormFile(key)
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
-	return c.Request, nil
+	
+	return &FileHeader{
+		FileHeader: header,
+		File:       file,
+	}, nil
+}
+
+func (c *Context) FormFiles(key string) ([]*FileHeader, error) {
+	if err := c.Request.ParseMultipartForm(32 << 20); err != nil {
+		return nil, err
+	}
+	
+	if c.Request.MultipartForm == nil || c.Request.MultipartForm.File == nil {
+		return nil, fmt.Errorf("no multipart form")
+	}
+	
+	fileHeaders := c.Request.MultipartForm.File[key]
+	if len(fileHeaders) == 0 {
+		return nil, fmt.Errorf("no files found for key: %s", key)
+	}
+	
+	var files []*FileHeader
+	for _, fh := range fileHeaders {
+		file, err := fh.Open()
+		if err != nil {
+			return nil, err
+		}
+		
+		files = append(files, &FileHeader{
+			FileHeader: fh,
+			File:       file,
+		})
+	}
+	
+	return files, nil
+}
+
+func (c *Context) SaveUploadedFile(fileHeader *FileHeader, uploadDir string) (string, error) {
+	if fileHeader == nil {
+		return "", fmt.Errorf("file header is nil")
+	}
+
+	filename := GenerateUniqueFilename(fileHeader.Filename)
+
+	err := SaveFileWithName(fileHeader, uploadDir, filename)
+	if err != nil {
+		return "", err
+	}
+	
+	return filepath.Join(uploadDir, filename), nil
+}
+
+func (c *Context) ValidateFile(fileHeader *FileHeader, validation FileValidation) error {
+	return ValidateFile(fileHeader, validation)
+}
+
+func (c *Context) ValidateFiles(fileHeaders []*FileHeader, validation FileValidation) FileUploadErrors {
+	var errors FileUploadErrors
+	
+	for i, fileHeader := range fileHeaders {
+		if err := ValidateFile(fileHeader, validation); err != nil {
+			if uploadErr, ok := err.(FileUploadError); ok {
+				uploadErr.Field = fmt.Sprintf("file[%d]", i)
+				errors = append(errors, uploadErr)
+			}
+		}
+	}
+	
+	return errors
+}
+
+func (c *Context) BindMultipart(obj interface{}) error {
+	if err := c.Request.ParseMultipartForm(32 << 20); err != nil {
+		return err
+	}
+	
+	rv := reflect.ValueOf(obj)
+	if rv.Kind() != reflect.Ptr || rv.Elem().Kind() != reflect.Struct {
+		return fmt.Errorf("obj must be a pointer to struct")
+	}
+	
+	rv = rv.Elem()
+	rt := rv.Type()
+	
+	for i := 0; i < rv.NumField(); i++ {
+		field := rv.Field(i)
+		fieldType := rt.Field(i)
+		
+		if !field.CanSet() {
+			continue
+		}
+
+		fieldName := fieldType.Name
+		if tag := fieldType.Tag.Get("form"); tag != "" {
+			fieldName = tag
+		}
+
+		if field.Type() == reflect.TypeOf(&FileHeader{}) {
+			fileHeader, err := c.FormFile(fieldName)
+			if err == nil {
+				field.Set(reflect.ValueOf(fileHeader))
+			}
+			continue
+		}
+
+		if field.Type() == reflect.TypeOf([]*FileHeader{}) {
+			fileHeaders, err := c.FormFiles(fieldName)
+			if err == nil {
+				field.Set(reflect.ValueOf(fileHeaders))
+			}
+			continue
+		}
+
+		formValue := c.Request.FormValue(fieldName)
+		if formValue == "" {
+			continue
+		}
+		
+		if err := setFieldValue(field, formValue); err != nil {
+			return fmt.Errorf("invalid value for field %s: %v", fieldType.Name, err)
+		}
+	}
+	
+	return nil
+}
+
+func (c *Context) GetUploadedFileInfo(key string) (map[string]interface{}, error) {
+	fileHeader, err := c.FormFile(key)
+	if err != nil {
+		return nil, err
+	}
+	
+	return map[string]interface{}{
+		"filename":    fileHeader.Filename,
+		"size":        fileHeader.Size,
+		"size_human":  FormatFileSize(fileHeader.Size),
+		"content_type": fileHeader.Header.Get("Content-Type"),
+		"is_image":    IsImageFile(fileHeader.Header.Get("Content-Type")),
+	}, nil
 }
 
 func (c *Context) setParam(key, value string) {
