@@ -15,6 +15,8 @@
 - 📁 **Группы маршрутов**: Организация маршрутов с префиксами и групповыми middleware
 - ✅ **Валидация**: Мощная система валидации с struct tags и custom валидаторами
 - 📤 **Загрузка файлов**: Поддержка multipart form с валидацией файлов
+- 🔄 **Graceful Shutdown**: Корректное завершение сервера с обработкой сигналов
+- 🏥 **Health Checks**: Встроенные проверки состояния приложения
 
 ## Установка
 
@@ -44,6 +46,201 @@ func main() {
     log.Fatal(app.Listen(":3000"))
 }
 ```
+
+## Graceful Shutdown и Health Checks
+
+Goify обеспечивает корректное завершение сервера и мониторинг состояния приложения:
+
+### Graceful Shutdown
+
+#### Базовое использование
+```go
+app := goify.New()
+
+app.GET("/", func(c *goify.Context) {
+    c.SendSuccess(goify.H{"message": "Сервер работает"})
+})
+
+if err := app.ListenAndServeWithGracefulShutdown(":3000"); err != nil {
+    log.Fatal(err)
+}
+```
+
+#### Настройка shutdown
+```go
+config := goify.ShutdownConfig{
+    Timeout: 30 * time.Second,
+}
+
+app.OnShutdown(func() {
+    log.Println("Закрытие соединений с базой данных...")
+    db.Close()
+})
+
+app.OnShutdown(func() {
+    log.Println("Сохранение данных в кэше...")
+    cache.Save()
+})
+
+app.ListenAndServeWithGracefulShutdown(":3000", config)
+```
+
+#### Ручное управление
+```go
+go func() {
+    if err := app.Listen(":3000"); err != nil {
+        log.Fatal(err)
+    }
+}()
+
+quit := make(chan os.Signal, 1)
+signal.Notify(quit, syscall.SIGTERM, syscall.SIGINT)
+<-quit
+
+ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+defer cancel()
+
+if err := app.Shutdown(ctx); err != nil {
+    log.Fatal("Ошибка при завершении сервера:", err)
+}
+```
+
+### Health Checks
+
+#### Настройка приложения
+```go
+goify.SetAppInfo("1.0.0", "production")
+
+goify.RegisterHealthCheck("database", goify.DatabaseHealthCheck(func() error {
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+    return db.PingContext(ctx)
+}))
+
+goify.RegisterHealthCheck("redis", goify.RedisHealthCheck(func() error {
+    return redisClient.Ping().Err()
+}))
+
+goify.RegisterHealthCheck("memory", goify.MemoryHealthCheck(500))
+goify.RegisterHealthCheck("disk", goify.DiskSpaceHealthCheck("/", 10))
+```
+
+#### Health endpoints
+```go
+app.GET("/health", goify.HealthCheckHandler())
+
+app.GET("/liveness", func(c *goify.Context) {
+    c.JSON(200, goify.H{
+        "status": "alive",
+        "timestamp": time.Now(),
+    })
+})
+
+app.GET("/readiness", func(c *goify.Context) {
+    c.JSON(200, goify.H{
+        "status": "ready",
+        "timestamp": time.Now(),
+    })
+})
+```
+
+#### Пользовательские health checks
+```go
+goify.RegisterHealthCheck("external_api", func() goify.HealthCheck {
+    client := &http.Client{Timeout: 5 * time.Second}
+    resp, err := client.Get("https://api.example.com/status")
+    
+    if err != nil {
+        return goify.HealthCheck{
+            Name:    "external_api",
+            Status:  goify.StatusUnhealthy,
+            Message: err.Error(),
+        }
+    }
+    defer resp.Body.Close()
+    
+    if resp.StatusCode != 200 {
+        return goify.HealthCheck{
+            Name:    "external_api",
+            Status:  goify.StatusDegraded,
+            Message: fmt.Sprintf("API returned %d", resp.StatusCode),
+        }
+    }
+    
+    return goify.HealthCheck{
+        Name:    "external_api",
+        Status:  goify.StatusHealthy,
+        Message: "External API is responding",
+    }
+})
+```
+
+### Встроенные Health Checks
+
+#### Database Health Check
+```go
+goify.RegisterHealthCheck("postgres", goify.DatabaseHealthCheck(func() error {
+    return db.Ping()
+}))
+```
+
+#### Redis Health Check
+```go
+goify.RegisterHealthCheck("redis", goify.RedisHealthCheck(func() error {
+    return redisClient.Ping().Err()
+}))
+```
+
+#### Memory Health Check
+```go
+goify.RegisterHealthCheck("memory", goify.MemoryHealthCheck(500))
+```
+
+#### Disk Space Health Check
+```go
+goify.RegisterHealthCheck("disk", goify.DiskSpaceHealthCheck("/var/lib/app", 5))
+```
+
+### Health Check Response
+
+Health endpoint возвращает следующую структуру:
+
+```json
+{
+    "status": "healthy",
+    "timestamp": "2024-01-01T12:00:00Z",
+    "uptime": "2h 30m 45s",
+    "version": "1.0.0",
+    "environment": "production",
+    "checks": {
+        "database": {
+            "name": "database",
+            "status": "healthy",
+            "message": "Database connection is healthy",
+            "last_checked": "2024-01-01T12:00:00Z",
+            "duration": "2ms"
+        },
+        "memory": {
+            "name": "memory",
+            "status": "healthy",
+            "message": "Memory usage is normal: 45MB",
+            "last_checked": "2024-01-01T12:00:00Z",
+            "duration": "1ms",
+            "data": {
+                "allocated_mb": 45,
+                "max_mb": 500
+            }
+        }
+    }
+}
+```
+
+### Статусы Health Checks
+
+- **healthy** - Все проверки прошли успешно
+- **degraded** - Есть проблемы, но сервис работает
+- **unhealthy** - Критические проблемы, сервис недоступен
+
 
 ## Основное использование
 
@@ -75,6 +272,50 @@ app.GET("/users/:userId/posts/:postId", func(c *goify.Context) {
 // Wildcard параметры (захват всего)
 app.GET("/files/*filepath", func(c *goify.Context) {
     filepath := c.Param("filepath") // Получает всё после /files/
+})
+```
+
+### Graceful Shutdown
+
+```go
+app := goify.New()
+
+app.GET("/", func(c *goify.Context) {
+    c.SendSuccess(goify.H{"message": "Сервер работает"})
+})
+
+app.OnShutdown(func() {
+    log.Println("Закрытие соединений с БД...")
+})
+
+config := goify.ShutdownConfig{
+    Timeout: 30 * time.Second,
+}
+
+if err := app.ListenAndServeWithGracefulShutdown(":3000", config); err != nil {
+    log.Fatal(err)
+}
+```
+
+### Health Checks
+
+```go
+goify.SetAppInfo("1.0.0", "production")
+
+goify.RegisterHealthCheck("database", goify.DatabaseHealthCheck(func() error {
+    return db.Ping()
+}))
+
+goify.RegisterHealthCheck("redis", goify.RedisHealthCheck(func() error {
+    return redisClient.Ping().Err()
+}))
+
+goify.RegisterHealthCheck("memory", goify.MemoryHealthCheck(500))
+
+app.GET("/health", goify.HealthCheckHandler())
+
+app.GET("/liveness", func(c *goify.Context) {
+    c.JSON(200, goify.H{"status": "alive"})
 })
 ```
 
@@ -301,6 +542,7 @@ app.Use(func(c *goify.Context, next func()) {
 - [Группы и параметры](./examples/groups-params/main.go) - URL параметры и группы маршрутов
 - [Валидация](./examples/validation/main.go) - Валидация запросов с struct tags
 - [Загрузка файлов](./examples/upload/main.go) - Загрузка файлов с валидацией
+- [Graceful Shutdown](./examples/shutdown/main.go) - Корректное завершение и health checks
 
 ## Справочник API
 
@@ -309,6 +551,9 @@ app.Use(func(c *goify.Context, next func()) {
 - `New()` - Создать новый экземпляр роутера
 - `Use(middleware...)` - Добавить middleware к роутеру
 - `Group(prefix)` - Создать группу маршрутов с префиксом
+- `OnShutdown(fn)` - Добавить функцию для выполнения при завершении
+- `Shutdown(ctx)` - Корректно завершить сервер
+- `ListenAndServeWithGracefulShutdown(addr, config)` - Запуск с graceful shutdown
 - `GET(path, handler)` - Зарегистрировать GET маршрут
 - `POST(path, handler)` - Зарегистрировать POST маршрут
 - `PUT(path, handler)` - Зарегистрировать PUT маршрут

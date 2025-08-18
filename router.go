@@ -1,6 +1,7 @@
 package goify
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -8,7 +9,7 @@ import (
 
 type Router struct {
 	routes     map[string]map[string]HandlerFunc
-	tree       *RouteNode             
+	tree       *RouteNode                
 	middleware []MiddlewareFunc
 	server     *http.Server
 }
@@ -100,8 +101,11 @@ func (rt *Router) Listen(addr string) error {
 	return rt.server.ListenAndServe()
 }
 
-func (rt *Router) Shutdown() error {
+func (rt *Router) Shutdown(ctx ...context.Context) error {
 	if rt.server != nil {
+		if len(ctx) > 0 {
+			return rt.server.Shutdown(ctx[0])
+		}
 		return rt.server.Close()
 	}
 	return nil
